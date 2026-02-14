@@ -40,9 +40,10 @@ Shaka needs Accessibility access to manage windows. On first launch, macOS will 
 ### Uninstall
 
 ```bash
-make uninstall
-rm -rf ~/.config/shaka
+rm -rf /Applications/Shaka.app ~/.config/shaka
 ```
+
+Then remove Shaka from **System Settings → Privacy & Security → Accessibility**.
 
 ## Usage
 
