@@ -54,8 +54,8 @@ Default shortcuts (with `ctrl` as the leader key):
 | `ctrl` + `←→↑↓` | Focus nearest window in direction |
 | `ctrl` + `opt` + `←→↑↓` | Move window |
 | `ctrl` + `shift` + `←→↑↓` | Resize window |
-| `ctrl` + `cmd` + `←→` | Snap to left/right half |
-| `ctrl` + `cmd` + `↑↓` | Snap to top/bottom half |
+| `ctrl` + `cmd` + `←→` | Snap to left/right (cycles: ½ → ⅓ → ⅔) |
+| `ctrl` + `cmd` + `↑↓` | Snap to top/bottom (cycles: ½ → ⅓ → ⅔) |
 | `ctrl` + `return` | Center window on screen |
 | `ctrl` + `shift` + `return` | Fill screen (with padding) |
 

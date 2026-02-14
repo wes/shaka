@@ -37,6 +37,11 @@ class WindowManager {
     private var sizeVelocity = CGPoint.zero   // .x = width vel, .y = height vel
     private var isAnimating  = false
 
+    // Snap cycle: half → third → two-thirds → half → ...
+    private var lastSnapDirection: Direction?
+    private var snapCycleIndex: Int = 0
+    private let snapFractions: [CGFloat] = [1.0/2, 1.0/3, 2.0/3]
+
     deinit { stopAnimation() }
 
     // MARK: - Public Actions
@@ -109,43 +114,63 @@ class WindowManager {
     }
 
     func snap(_ direction: Direction) {
+        // Cycle through sizes on repeated presses of the same direction
+        if direction == lastSnapDirection {
+            snapCycleIndex = (snapCycleIndex + 1) % snapFractions.count
+        } else {
+            snapCycleIndex = 0
+            lastSnapDirection = direction
+        }
+
+        let fraction = snapFractions[snapCycleIndex]
+
         withFocusedWindow { window, screenFrame in
             let p = self.screenPadding
             let target: CGRect
 
             switch direction {
             case .left:
+                let w = self.snapDimension(screenFrame.width, fraction: fraction)
                 target = CGRect(
                     x: screenFrame.minX + p,
                     y: screenFrame.minY + p,
-                    width: screenFrame.width / 2 - p * 1.5,
+                    width: w,
                     height: screenFrame.height - p * 2
                 )
             case .right:
+                let w = self.snapDimension(screenFrame.width, fraction: fraction)
                 target = CGRect(
-                    x: screenFrame.midX + p * 0.5,
+                    x: screenFrame.maxX - p - w,
                     y: screenFrame.minY + p,
-                    width: screenFrame.width / 2 - p * 1.5,
+                    width: w,
                     height: screenFrame.height - p * 2
                 )
             case .up:
+                let h = self.snapDimension(screenFrame.height, fraction: fraction)
                 target = CGRect(
                     x: screenFrame.minX + p,
                     y: screenFrame.minY + p,
                     width: screenFrame.width - p * 2,
-                    height: screenFrame.height / 2 - p * 1.5
+                    height: h
                 )
             case .down:
+                let h = self.snapDimension(screenFrame.height, fraction: fraction)
                 target = CGRect(
                     x: screenFrame.minX + p,
-                    y: screenFrame.midY + p * 0.5,
+                    y: screenFrame.maxY - p - h,
                     width: screenFrame.width - p * 2,
-                    height: screenFrame.height / 2 - p * 1.5
+                    height: h
                 )
             }
 
             self.animateTo(window: window, target: target)
         }
+    }
+
+    /// Calculate a snap dimension (width or height) for a given fraction,
+    /// accounting for uniform padding between sections.
+    private func snapDimension(_ total: CGFloat, fraction: CGFloat) -> CGFloat {
+        return fraction * (total - screenPadding) - screenPadding
     }
 
     func focusWindow(_ direction: Direction) {
