@@ -15,7 +15,13 @@ A friendly macOS window manager that works with your natural workflow. No rigid 
 
 ## Install
 
-Requires macOS 13+ and [Swift](https://www.swift.org/install/) (included with Xcode or Xcode Command Line Tools).
+Requires macOS 13+ and Xcode Command Line Tools (`xcode-select --install`).
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wes/shaka/main/install.sh | bash
+```
+
+Or clone and build manually:
 
 ```bash
 git clone https://github.com/wes/shaka.git
@@ -23,7 +29,7 @@ cd shaka
 make install
 ```
 
-This builds a release binary and installs `Shaka.app` to `/Applications`. Launch it from Spotlight or `/Applications`.
+Either way, `Shaka.app` gets installed to `/Applications`. Launch it from Spotlight or `/Applications`.
 
 ### Grant Accessibility Permission
 
