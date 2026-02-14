@@ -98,6 +98,10 @@ class HotkeyManager {
             case .shrinkWidth:  wm.resize(.left)
             case .growHeight:   wm.resize(.up)
             case .shrinkHeight: wm.resize(.down)
+            case .snapLeft:     wm.snap(.left)
+            case .snapRight:    wm.snap(.right)
+            case .snapUp:       wm.snap(.up)
+            case .snapDown:     wm.snap(.down)
             case .center:       wm.center()
             case .fill:         wm.smartFill()
             }

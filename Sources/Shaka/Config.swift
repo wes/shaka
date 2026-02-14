@@ -15,6 +15,10 @@ enum Action: String, CaseIterable {
     case shrinkWidth = "shrink_width"
     case growHeight  = "grow_height"
     case shrinkHeight = "shrink_height"
+    case snapLeft    = "snap_left"
+    case snapRight   = "snap_right"
+    case snapUp      = "snap_up"
+    case snapDown    = "snap_down"
     case center      = "center"
     case fill        = "fill"
 }
@@ -52,6 +56,10 @@ struct ShakaConfig {
         "shrink_width":  "leader+shift+left",
         "grow_height":   "leader+shift+up",
         "shrink_height": "leader+shift+down",
+        "snap_left":     "leader+cmd+left",
+        "snap_right":    "leader+cmd+right",
+        "snap_up":       "leader+cmd+up",
+        "snap_down":     "leader+cmd+down",
         "center":        "leader+return",
         "fill":          "leader+shift+return",
     ]
@@ -199,6 +207,7 @@ struct ShakaConfig {
             "focus_left", "focus_right", "focus_up", "focus_down",
             "move_left", "move_right", "move_up", "move_down",
             "grow_width", "shrink_width", "grow_height", "shrink_height",
+            "snap_left", "snap_right", "snap_up", "snap_down",
             "center", "fill",
         ]
 

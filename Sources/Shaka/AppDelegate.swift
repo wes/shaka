@@ -41,6 +41,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             "\(L) ←→↑↓       Focus window",
             "\(L)⌥ ←→↑↓      Move window",
             "\(L)⇧ ←→↑↓      Resize window",
+            "\(L)⌘ ←→↑↓      Snap to half",
             "\(L) Return      Center window",
             "\(L)⇧ Return     Fill screen",
         ] {
@@ -148,6 +149,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         \(L) + arrows           focus
         \(L) + opt + arrows     move
         \(L) + shift + arrows   resize
+        \(L) + cmd + arrows     snap
         \(L) + return           center
         \(L) + shift + return   fill
 

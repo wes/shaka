@@ -108,6 +108,46 @@ class WindowManager {
         }
     }
 
+    func snap(_ direction: Direction) {
+        withFocusedWindow { window, screenFrame in
+            let p = self.screenPadding
+            let target: CGRect
+
+            switch direction {
+            case .left:
+                target = CGRect(
+                    x: screenFrame.minX + p,
+                    y: screenFrame.minY + p,
+                    width: screenFrame.width / 2 - p * 1.5,
+                    height: screenFrame.height - p * 2
+                )
+            case .right:
+                target = CGRect(
+                    x: screenFrame.midX + p * 0.5,
+                    y: screenFrame.minY + p,
+                    width: screenFrame.width / 2 - p * 1.5,
+                    height: screenFrame.height - p * 2
+                )
+            case .up:
+                target = CGRect(
+                    x: screenFrame.minX + p,
+                    y: screenFrame.minY + p,
+                    width: screenFrame.width - p * 2,
+                    height: screenFrame.height / 2 - p * 1.5
+                )
+            case .down:
+                target = CGRect(
+                    x: screenFrame.minX + p,
+                    y: screenFrame.midY + p * 0.5,
+                    width: screenFrame.width - p * 2,
+                    height: screenFrame.height / 2 - p * 1.5
+                )
+            }
+
+            self.animateTo(window: window, target: target)
+        }
+    }
+
     func focusWindow(_ direction: Direction) {
         guard let currentWindow = getFocusedWindow() else { return }
         let currentFrame = getWindowFrame(currentWindow)
