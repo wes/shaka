@@ -4,6 +4,14 @@ enum Direction {
     case left, right, up, down
 }
 
+enum WindowMode: String {
+    case relative, grid
+}
+
+extension Notification.Name {
+    static let shakaModeChanged = Notification.Name("shakaModeChanged")
+}
+
 class WindowManager {
 
     // MARK: - Configuration (from ~/.config/shaka/config.json)
@@ -18,6 +26,10 @@ class WindowManager {
     private let damping:       CGFloat
     private let restThreshold: CGFloat = 0.5
 
+    private(set) var mode: WindowMode = .relative
+    private let gridColumns: Int
+    private let gridRows:    Int
+
     init(config: ShakaConfig) {
         moveStep      = CGFloat(config.moveStep)
         resizeStep    = CGFloat(config.resizeStep)
@@ -25,6 +37,8 @@ class WindowManager {
         screenPadding = CGFloat(config.screenPadding)
         stiffness     = CGFloat(config.animationStiffness)
         damping       = CGFloat(config.animationDamping)
+        gridColumns   = config.gridColumns
+        gridRows      = config.gridRows
     }
 
     // MARK: - Animation State
@@ -50,15 +64,28 @@ class WindowManager {
         withFocusedWindow { window, screenFrame in
             var target = self.baseFrame(for: window)
 
+            let step: CGFloat
+            if self.mode == .grid {
+                step = (direction == .left || direction == .right)
+                    ? screenFrame.width  / CGFloat(self.gridColumns)
+                    : screenFrame.height / CGFloat(self.gridRows)
+            } else {
+                step = self.moveStep
+            }
+
             switch direction {
-            case .left:  target.origin.x -= self.moveStep
-            case .right: target.origin.x += self.moveStep
-            case .up:    target.origin.y -= self.moveStep
-            case .down:  target.origin.y += self.moveStep
+            case .left:  target.origin.x -= step
+            case .right: target.origin.x += step
+            case .up:    target.origin.y -= step
+            case .down:  target.origin.y += step
             }
 
             target = self.constrain(target, within: screenFrame)
-            target = self.snap(target, within: screenFrame)
+            if self.mode == .grid {
+                target = self.snapToGrid(target, screenFrame: screenFrame)
+            } else {
+                target = self.snap(target, within: screenFrame)
+            }
             self.animateTo(window: window, target: target)
         }
     }
@@ -67,25 +94,37 @@ class WindowManager {
         withFocusedWindow { window, screenFrame in
             var target = self.baseFrame(for: window)
 
+            let step: CGFloat
+            if self.mode == .grid {
+                step = (direction == .left || direction == .right)
+                    ? screenFrame.width  / CGFloat(self.gridColumns)
+                    : screenFrame.height / CGFloat(self.gridRows)
+            } else {
+                step = self.resizeStep
+            }
+
             // Resize from center so the window stays visually anchored
             switch direction {
             case .right:
-                target.size.width  += self.resizeStep
-                target.origin.x    -= self.resizeStep / 2
+                target.size.width  += step
+                target.origin.x    -= step / 2
             case .left:
-                let delta = min(self.resizeStep, target.size.width - self.minDimension)
+                let delta = min(step, target.size.width - self.minDimension)
                 target.size.width  -= delta
                 target.origin.x    += delta / 2
             case .up:
-                target.size.height += self.resizeStep
-                target.origin.y    -= self.resizeStep / 2
+                target.size.height += step
+                target.origin.y    -= step / 2
             case .down:
-                let delta = min(self.resizeStep, target.size.height - self.minDimension)
+                let delta = min(step, target.size.height - self.minDimension)
                 target.size.height -= delta
                 target.origin.y    += delta / 2
             }
 
             target = self.constrain(target, within: screenFrame)
+            if self.mode == .grid {
+                target = self.snapToGrid(target, screenFrame: screenFrame)
+            }
             self.animateTo(window: window, target: target)
         }
     }
@@ -96,19 +135,28 @@ class WindowManager {
             var target = base
             target.origin.x = screenFrame.midX - base.width / 2
             target.origin.y = screenFrame.midY - base.height / 2
+            if self.mode == .grid {
+                target = self.snapToGrid(target, screenFrame: screenFrame)
+            }
             self.animateTo(window: window, target: target)
         }
     }
 
     func smartFill() {
         withFocusedWindow { window, screenFrame in
-            let p = self.screenPadding
-            let target = CGRect(
-                x: screenFrame.minX + p,
-                y: screenFrame.minY + p,
-                width:  screenFrame.width  - p * 2,
-                height: screenFrame.height - p * 2
-            )
+            var target: CGRect
+            if self.mode == .grid {
+                target = screenFrame
+                target = self.snapToGrid(target, screenFrame: screenFrame)
+            } else {
+                let p = self.screenPadding
+                target = CGRect(
+                    x: screenFrame.minX + p,
+                    y: screenFrame.minY + p,
+                    width:  screenFrame.width  - p * 2,
+                    height: screenFrame.height - p * 2
+                )
+            }
             self.animateTo(window: window, target: target)
         }
     }
@@ -125,42 +173,83 @@ class WindowManager {
         let fraction = snapFractions[snapCycleIndex]
 
         withFocusedWindow { window, screenFrame in
-            let p = self.screenPadding
-            let target: CGRect
+            var target: CGRect
 
-            switch direction {
-            case .left:
-                let w = self.snapDimension(screenFrame.width, fraction: fraction)
-                target = CGRect(
-                    x: screenFrame.minX + p,
-                    y: screenFrame.minY + p,
-                    width: w,
-                    height: screenFrame.height - p * 2
-                )
-            case .right:
-                let w = self.snapDimension(screenFrame.width, fraction: fraction)
-                target = CGRect(
-                    x: screenFrame.maxX - p - w,
-                    y: screenFrame.minY + p,
-                    width: w,
-                    height: screenFrame.height - p * 2
-                )
-            case .up:
-                let h = self.snapDimension(screenFrame.height, fraction: fraction)
-                target = CGRect(
-                    x: screenFrame.minX + p,
-                    y: screenFrame.minY + p,
-                    width: screenFrame.width - p * 2,
-                    height: h
-                )
-            case .down:
-                let h = self.snapDimension(screenFrame.height, fraction: fraction)
-                target = CGRect(
-                    x: screenFrame.minX + p,
-                    y: screenFrame.maxY - p - h,
-                    width: screenFrame.width - p * 2,
-                    height: h
-                )
+            if self.mode == .grid {
+                let cellW = screenFrame.width  / CGFloat(self.gridColumns)
+                let cellH = screenFrame.height / CGFloat(self.gridRows)
+                let cols = max(1, Int(round(CGFloat(self.gridColumns) * fraction)))
+                let rows = max(1, Int(round(CGFloat(self.gridRows)    * fraction)))
+
+                switch direction {
+                case .left:
+                    target = CGRect(
+                        x: screenFrame.minX,
+                        y: screenFrame.minY,
+                        width:  cellW * CGFloat(cols),
+                        height: screenFrame.height
+                    )
+                case .right:
+                    let w = cellW * CGFloat(cols)
+                    target = CGRect(
+                        x: screenFrame.maxX - w,
+                        y: screenFrame.minY,
+                        width:  w,
+                        height: screenFrame.height
+                    )
+                case .up:
+                    target = CGRect(
+                        x: screenFrame.minX,
+                        y: screenFrame.minY,
+                        width:  screenFrame.width,
+                        height: cellH * CGFloat(rows)
+                    )
+                case .down:
+                    let h = cellH * CGFloat(rows)
+                    target = CGRect(
+                        x: screenFrame.minX,
+                        y: screenFrame.maxY - h,
+                        width:  screenFrame.width,
+                        height: h
+                    )
+                }
+            } else {
+                let p = self.screenPadding
+
+                switch direction {
+                case .left:
+                    let w = self.snapDimension(screenFrame.width, fraction: fraction)
+                    target = CGRect(
+                        x: screenFrame.minX + p,
+                        y: screenFrame.minY + p,
+                        width: w,
+                        height: screenFrame.height - p * 2
+                    )
+                case .right:
+                    let w = self.snapDimension(screenFrame.width, fraction: fraction)
+                    target = CGRect(
+                        x: screenFrame.maxX - p - w,
+                        y: screenFrame.minY + p,
+                        width: w,
+                        height: screenFrame.height - p * 2
+                    )
+                case .up:
+                    let h = self.snapDimension(screenFrame.height, fraction: fraction)
+                    target = CGRect(
+                        x: screenFrame.minX + p,
+                        y: screenFrame.minY + p,
+                        width: screenFrame.width - p * 2,
+                        height: h
+                    )
+                case .down:
+                    let h = self.snapDimension(screenFrame.height, fraction: fraction)
+                    target = CGRect(
+                        x: screenFrame.minX + p,
+                        y: screenFrame.maxY - p - h,
+                        width: screenFrame.width - p * 2,
+                        height: h
+                    )
+                }
             }
 
             self.animateTo(window: window, target: target)
@@ -255,6 +344,28 @@ class WindowManager {
                 break
             }
         }
+    }
+
+    // MARK: - Grid Mode
+
+    func toggleMode() {
+        mode = (mode == .relative) ? .grid : .relative
+        print("[shaka] mode: \(mode.rawValue)")
+        NotificationCenter.default.post(name: .shakaModeChanged, object: self)
+    }
+
+    private func snapToGrid(_ frame: CGRect, screenFrame: CGRect) -> CGRect {
+        let cellW = screenFrame.width  / CGFloat(gridColumns)
+        let cellH = screenFrame.height / CGFloat(gridRows)
+
+        let x = screenFrame.minX + (round((frame.origin.x - screenFrame.minX) / cellW) * cellW)
+        let y = screenFrame.minY + (round((frame.origin.y - screenFrame.minY) / cellH) * cellH)
+        let w = max(cellW, round(frame.size.width  / cellW) * cellW)
+        let h = max(cellH, round(frame.size.height / cellH) * cellH)
+
+        var snapped = CGRect(x: x, y: y, width: w, height: h)
+        snapped = constrain(snapped, within: screenFrame)
+        return snapped
     }
 
     // MARK: - Animation Engine

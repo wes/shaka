@@ -104,6 +104,7 @@ class HotkeyManager {
             case .snapDown:     wm.snap(.down)
             case .center:       wm.center()
             case .fill:         wm.smartFill()
+            case .toggleMode:   wm.toggleMode()
             }
         }
 

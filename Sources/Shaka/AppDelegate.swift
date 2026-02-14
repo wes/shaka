@@ -11,6 +11,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupStatusBar()
         printWelcome()
         requestAccessibility()
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(modeDidChange(_:)),
+            name: .shakaModeChanged,
+            object: nil
+        )
+    }
+
+    @objc private func modeDidChange(_ note: Notification) {
+        guard let wm = note.object as? WindowManager else { return }
+        statusItem.button?.title = (wm.mode == .grid) ? "🤙⊞" : "🤙"
     }
 
     // MARK: - Status Bar
@@ -44,6 +56,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             "\(L)⌘ ←→↑↓      Snap to half",
             "\(L) Return      Center window",
             "\(L)⇧ Return     Fill screen",
+            "\(L) /           Toggle grid mode",
         ] {
             let item = NSMenuItem(title: line, action: nil, keyEquivalent: "")
             item.isEnabled = false
@@ -130,6 +143,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeyManager = HotkeyManager(config: config)
         hotkeyManager?.start()
         rebuildMenu()
+        statusItem.button?.title = "🤙"
         print("Config reloaded 🤙")
     }
 
@@ -152,6 +166,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         \(L) + cmd + arrows     snap
         \(L) + return           center
         \(L) + shift + return   fill
+        \(L) + /                toggle grid mode
 
         config: ~/.config/shaka/config.toml
 

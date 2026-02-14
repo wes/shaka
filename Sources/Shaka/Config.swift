@@ -21,6 +21,7 @@ enum Action: String, CaseIterable {
     case snapDown    = "snap_down"
     case center      = "center"
     case fill        = "fill"
+    case toggleMode  = "toggle_mode"
 }
 
 // MARK: - Parsed Binding
@@ -41,6 +42,8 @@ struct ShakaConfig {
     var screenPadding: Double = 10
     var animationStiffness: Double = 300
     var animationDamping: Double = 28
+    var gridColumns: Int = 12
+    var gridRows: Int = 8
     var bindings: [String: String] = defaultBindings
 
     static let defaultBindings: [String: String] = [
@@ -62,6 +65,7 @@ struct ShakaConfig {
         "snap_down":     "leader+cmd+down",
         "center":        "leader+return",
         "fill":          "leader+shift+return",
+        "toggle_mode":   "leader+/",
     ]
 
     // MARK: - Parse Bindings
@@ -149,6 +153,8 @@ struct ShakaConfig {
             if let v = toml["screen_padding"]       as? Double { config.screenPadding = v }
             if let v = toml["animation_stiffness"]  as? Double { config.animationStiffness = v }
             if let v = toml["animation_damping"]    as? Double { config.animationDamping = v }
+            if let v = toml["grid_columns"]         as? Double { config.gridColumns = Int(v) }
+            if let v = toml["grid_rows"]            as? Double { config.gridRows = Int(v) }
 
             if let section = toml["bindings"] as? [String: Any] {
                 var b: [String: String] = [:]
@@ -190,6 +196,9 @@ struct ShakaConfig {
         animation_stiffness = \(Int(animationStiffness))
         animation_damping = \(Int(animationDamping))
 
+        grid_columns = \(gridColumns)
+        grid_rows = \(gridRows)
+
         [bindings]
         \(bindingsToTOML())
         """
@@ -209,6 +218,7 @@ struct ShakaConfig {
             "grow_width", "shrink_width", "grow_height", "shrink_height",
             "snap_left", "snap_right", "snap_up", "snap_down",
             "center", "fill",
+            "toggle_mode",
         ]
 
         var lines: [String] = []
