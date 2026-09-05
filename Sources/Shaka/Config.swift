@@ -3,25 +3,37 @@ import Cocoa
 // MARK: - Actions
 
 enum Action: String, CaseIterable {
-    case focusLeft   = "focus_left"
-    case focusRight  = "focus_right"
-    case focusUp     = "focus_up"
-    case focusDown   = "focus_down"
-    case moveLeft    = "move_left"
-    case moveRight   = "move_right"
-    case moveUp      = "move_up"
-    case moveDown    = "move_down"
-    case growWidth   = "grow_width"
-    case shrinkWidth = "shrink_width"
-    case growHeight  = "grow_height"
+    case focusLeft    = "focus_left"
+    case focusRight   = "focus_right"
+    case focusUp      = "focus_up"
+    case focusDown    = "focus_down"
+    case moveLeft     = "move_left"
+    case moveRight    = "move_right"
+    case moveUp       = "move_up"
+    case moveDown     = "move_down"
+    case growWidth    = "grow_width"
+    case shrinkWidth  = "shrink_width"
+    case growHeight   = "grow_height"
     case shrinkHeight = "shrink_height"
-    case snapLeft    = "snap_left"
-    case snapRight   = "snap_right"
-    case snapUp      = "snap_up"
-    case snapDown    = "snap_down"
-    case center      = "center"
-    case fill        = "fill"
-    case toggleMode  = "toggle_mode"
+    case snapLeft     = "snap_left"
+    case snapRight    = "snap_right"
+    case snapUp       = "snap_up"
+    case snapDown     = "snap_down"
+    case center       = "center"
+    case fill         = "fill"
+    case toggleMode   = "toggle_mode"
+    case toggleSplit  = "toggle_split"
+    case toggleFloat  = "toggle_float"
+    case cycleNext    = "cycle_next"
+
+    /// Actions with no Flow equivalent. Their keys are left unbound in Flow mode
+    /// so they reach the focused app instead.
+    var isReefOnly: Bool {
+        switch self {
+        case .toggleSplit, .toggleFloat, .cycleNext: return true
+        default: return false
+        }
+    }
 }
 
 // MARK: - Parsed Binding
@@ -42,8 +54,15 @@ struct ShakaConfig {
     var screenPadding: Double = 10
     var animationStiffness: Double = 300
     var animationDamping: Double = 28
-    var gridColumns: Int = 12
-    var gridRows: Int = 8
+
+    /// Which mode Shaka starts in: "flow" or "reef".
+    var defaultMode: String = "flow"
+
+    /// Reef mode gaps, following Hyprland's naming: `gapsOut` at the screen
+    /// edge, `gapsIn` around each tile (so neighbours sit 2 × gapsIn apart).
+    var gapsIn: Double = 6
+    var gapsOut: Double = 12
+
     var bindings: [String: String] = defaultBindings
 
     static let defaultBindings: [String: String] = [
@@ -66,6 +85,9 @@ struct ShakaConfig {
         "center":        "leader+return",
         "fill":          "leader+shift+return",
         "toggle_mode":   "leader+/",
+        "toggle_split":  "leader+shift+s",
+        "toggle_float":  "leader+shift+f",
+        "cycle_next":    "leader+opt+tab",
     ]
 
     // MARK: - Parse Bindings
@@ -121,6 +143,31 @@ struct ShakaConfig {
         }
     }
 
+    var startMode: WindowMode {
+        WindowMode(rawValue: defaultMode.lowercased()) ?? .flow
+    }
+
+    /// Render a binding like "leader+shift+left" as "⌃⇧←" for menus.
+    func displayString(for combo: String) -> String {
+        var modifiers = ""
+        var key = ""
+
+        for part in combo.lowercased().components(separatedBy: "+")
+            .map({ $0.trimmingCharacters(in: .whitespaces) }) {
+            let resolved = (part == "leader") ? leader.lowercased() : part
+
+            switch resolved {
+            case "ctrl", "control":      modifiers += "⌃"
+            case "opt", "option", "alt": modifiers += "⌥"
+            case "shift":                modifiers += "⇧"
+            case "cmd", "command":       modifiers += "⌘"
+            default:                     key = keySymbols[resolved] ?? resolved.uppercased()
+            }
+        }
+
+        return modifiers + key
+    }
+
     // MARK: - Load / Save
 
     static let configDir  = FileManager.default.homeDirectoryForCurrentUser
@@ -153,11 +200,14 @@ struct ShakaConfig {
             if let v = toml["screen_padding"]       as? Double { config.screenPadding = v }
             if let v = toml["animation_stiffness"]  as? Double { config.animationStiffness = v }
             if let v = toml["animation_damping"]    as? Double { config.animationDamping = v }
-            if let v = toml["grid_columns"]         as? Double { config.gridColumns = Int(v) }
-            if let v = toml["grid_rows"]            as? Double { config.gridRows = Int(v) }
+            if let v = toml["default_mode"]         as? String { config.defaultMode = v }
+            if let v = toml["gaps_in"]              as? Double { config.gapsIn = v }
+            if let v = toml["gaps_out"]             as? Double { config.gapsOut = v }
 
             if let section = toml["bindings"] as? [String: Any] {
-                var b: [String: String] = [:]
+                // Start from the defaults so a config written before a binding
+                // existed still picks it up instead of silently losing the action.
+                var b = defaultBindings
                 for (k, v) in section {
                     if let s = v as? String { b[k] = s }
                 }
@@ -174,40 +224,44 @@ struct ShakaConfig {
 
     func save() {
         let toml = """
-        # Shaka Window Manager Configuration
-        # Restart Shaka or click "Reload Config" after editing.
-        #
-        # Leader key options: "ctrl", "opt" / "alt", "cmd", "shift"
-        #
-        # Key names for bindings:
-        #   Arrows:  left, right, up, down
-        #   Special: return, space, tab, escape, delete
-        #   Letters: a-z
-        #   Numbers: 0-9
-        #   Combo example: "leader+shift+left"
+# Shaka Window Manager Configuration
+# Restart Shaka or click "Reload Config" after editing.
+#
+# Leader key options: "ctrl", "opt" / "alt", "cmd", "shift"
+#
+# Key names for bindings:
+#   Arrows:  left, right, up, down
+#   Special: return, space, tab, escape, delete
+#   Letters: a-z
+#   Numbers: 0-9
+#   Combo example: "leader+shift+left"
 
-        leader = "\(leader)"
+leader = "\(leader)"
 
-        move_step = \(Int(moveStep))
-        resize_step = \(Int(resizeStep))
-        edge_snap = \(Int(edgeSnap))
-        screen_padding = \(Int(screenPadding))
+# Which mode to start in: "flow" (free-floating) or "reef" (tiling)
+default_mode = "\(defaultMode)"
 
-        animation_stiffness = \(Int(animationStiffness))
-        animation_damping = \(Int(animationDamping))
+# --- Flow mode ---
+move_step = \(Int(moveStep))
+resize_step = \(Int(resizeStep))
+edge_snap = \(Int(edgeSnap))
+screen_padding = \(Int(screenPadding))
 
-        grid_columns = \(gridColumns)
-        grid_rows = \(gridRows)
+# --- Reef mode ---
+# gaps_out: space at the screen edge
+# gaps_in:  space around each tile, so neighbours sit 2x this apart
+gaps_in = \(Int(gapsIn))
+gaps_out = \(Int(gapsOut))
 
-        [bindings]
-        \(bindingsToTOML())
-        """
+# Spring animation parameters (both modes)
+animation_stiffness = \(Int(animationStiffness))
+animation_damping = \(Int(animationDamping))
 
-        let lines = toml.components(separatedBy: .newlines)
-            .map { $0.hasPrefix("        ") ? String($0.dropFirst(8)) : $0 }
-            .joined(separator: "\n")
+[bindings]
+\(bindingsToTOML())
+"""
 
-        try? lines.data(using: .utf8)?.write(to: Self.configPath)
+        try? toml.data(using: .utf8)?.write(to: Self.configPath)
     }
 
     private func bindingsToTOML() -> String {
@@ -218,7 +272,7 @@ struct ShakaConfig {
             "grow_width", "shrink_width", "grow_height", "shrink_height",
             "snap_left", "snap_right", "snap_up", "snap_down",
             "center", "fill",
-            "toggle_mode",
+            "toggle_mode", "toggle_split", "toggle_float", "cycle_next",
         ]
 
         var lines: [String] = []
@@ -314,6 +368,12 @@ enum TOML {
 }
 
 // MARK: - Key Maps
+
+private let keySymbols: [String: String] = [
+    "left": "←", "right": "→", "up": "↑", "down": "↓",
+    "return": "↩", "enter": "↩", "tab": "⇥", "space": "␣",
+    "delete": "⌫", "escape": "⎋", "esc": "⎋",
+]
 
 private let modifierMap: [String: CGEventFlags] = [
     "ctrl": .maskControl,    "control": .maskControl,

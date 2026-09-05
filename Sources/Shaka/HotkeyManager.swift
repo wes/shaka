@@ -84,6 +84,10 @@ class HotkeyManager {
         let wm = windowManager
         let action = binding.action
 
+        // Reef-only actions stay out of the way in Flow mode: pass the
+        // keystroke through to the focused app instead of swallowing it.
+        if action.isReefOnly && wm.mode == .flow { return false }
+
         DispatchQueue.main.async {
             switch action {
             case .focusLeft:    wm.focusWindow(.left)
@@ -105,6 +109,9 @@ class HotkeyManager {
             case .center:       wm.center()
             case .fill:         wm.smartFill()
             case .toggleMode:   wm.toggleMode()
+            case .toggleSplit:  wm.toggleSplit()
+            case .toggleFloat:  wm.toggleFloat()
+            case .cycleNext:    wm.cycleNext()
             }
         }
 

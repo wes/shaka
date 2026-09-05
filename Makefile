@@ -16,8 +16,21 @@ bundle: build
 	@echo "Built $(BUNDLE)"
 
 install: bundle
+	@pkill -x $(APP_NAME) 2>/dev/null || true
 	@cp -r $(BUNDLE) /Applications/
 	@echo "Installed to /Applications/$(BUNDLE)"
+	@echo ""
+	@echo "⚠️  Re-grant Accessibility permission."
+	@echo "   Shaka is ad-hoc signed, so replacing the binary invalidates the"
+	@echo "   existing grant. macOS keeps showing Shaka as ticked but denies it,"
+	@echo "   and every shortcut silently stops working."
+	@echo ""
+	@echo "   System Settings > Privacy & Security > Accessibility"
+	@echo "   Remove Shaka with the minus button, then add it back."
+	@echo ""
+	@echo "   Or reset it from the terminal, then relaunch Shaka:"
+	@echo "     tccutil reset Accessibility com.wes.shaka"
+	@echo ""
 	@echo "Open Shaka from Spotlight or /Applications."
 
 uninstall:
