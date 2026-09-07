@@ -58,6 +58,26 @@ final class Animator {
         springs[window]?.target ?? window.frame
     }
 
+    /// Place windows immediately, dropping any spring they were riding.
+    ///
+    /// A mouse drag is already a continuous gesture: springing toward the cursor
+    /// on top of it adds lag and overshoot, so live resizing sets frames flat and
+    /// lets the hand do the easing.
+    func set(_ frames: [WindowRef: CGRect]) {
+        for (window, frame) in frames {
+            springs.removeValue(forKey: window)
+            window.frame = frame
+        }
+        if springs.isEmpty { stop() }
+    }
+
+    /// Stop animating one window, leaving it wherever it currently sits. Used
+    /// when the user takes hold of it themselves.
+    func cancel(_ window: WindowRef) {
+        springs.removeValue(forKey: window)
+        if springs.isEmpty { stop() }
+    }
+
     func cancelAll() {
         springs.removeAll()
         stop()

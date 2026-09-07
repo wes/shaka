@@ -7,6 +7,32 @@ enum Orientation {
     var flipped: Orientation { self == .horizontal ? .vertical : .horizontal }
 }
 
+/// One side of a tile, in Accessibility coordinates — `top` is the smaller y.
+///
+/// Every edge that is not the screen border is the split line of exactly one
+/// ancestor, which is what makes edge-based resizing exact: moving an edge by
+/// `d` points means moving that one split by `d`.
+enum Edge {
+    case left, right, top, bottom
+
+    var orientation: Orientation {
+        (self == .left || self == .right) ? .horizontal : .vertical
+    }
+
+    /// A tile's right/bottom edge is the split line of an ancestor whose *first*
+    /// child holds the tile; its left/top edge belongs to a *second* child.
+    var isFirstChild: Bool { self == .right || self == .bottom }
+
+    var opposite: Edge {
+        switch self {
+        case .left:   return .right
+        case .right:  return .left
+        case .top:    return .bottom
+        case .bottom: return .top
+        }
+    }
+}
+
 /// A node in the dwindle tree. A leaf holds a window; an internal node splits
 /// its rect between two children at `ratio`.
 final class TileNode {
@@ -55,8 +81,15 @@ final class ReefLayout {
     /// Focused window promoted to cover the whole screen, if any.
     var fullscreen: WindowRef?
 
-    private let minRatio: CGFloat = 0.1
-    private let maxRatio: CGFloat = 0.9
+    /// Windows that belong to this workspace but sit outside the tree, floated
+    /// out by `toggle_float`. They are not tiled, but they are still members —
+    /// they park and unpark with the rest of the workspace.
+    var floaters: Set<WindowRef> = []
+
+    /// Smallest tile a split is allowed to leave behind, in points. Ratios are
+    /// clamped against this rather than a fixed fraction, so a resize cannot
+    /// squeeze a window down to a sliver on a wide display.
+    var minTile: CGFloat = 120
 
     // MARK: - Contents
 
@@ -64,7 +97,12 @@ final class ReefLayout {
 
     var windows: [WindowRef] { leaves().compactMap(\.window) }
 
+    /// Everything this workspace is responsible for, tiled or floating.
+    var members: [WindowRef] { windows + floaters }
+
     func contains(_ window: WindowRef) -> Bool { leaf(for: window) != nil }
+
+    func owns(_ window: WindowRef) -> Bool { floaters.contains(window) || contains(window) }
 
     /// Leaves in tree order — left/top subtree first. The first leaf is the
     /// "master" tile that `promoteToMaster` swaps into.
@@ -124,6 +162,7 @@ final class ReefLayout {
     /// Remove a window; its sibling takes over the parent's space.
     func remove(_ window: WindowRef) {
         if fullscreen == window { fullscreen = nil }
+        floaters.remove(window)
 
         guard let node = leaf(for: window) else { return }
 
@@ -220,31 +259,98 @@ final class ReefLayout {
         swap(window, master)
     }
 
-    /// Hyprland's `resizeactive`: grow or shrink a tile by `step` points along one
-    /// axis by nudging the nearest enclosing split of that orientation. The
-    /// neighbours sharing that split absorb the change.
-    func resize(_ window: WindowRef, orientation: Orientation, grow: Bool, step: CGFloat) {
-        guard var node = leaf(for: window) else { return }
+    // MARK: - Resizing
+
+    /// The split that draws `node`'s `edge`, or nil when that edge is the screen
+    /// border and there is nothing on the far side to give up space.
+    ///
+    /// Walking up until the tile's subtree sits on the matching side of a split
+    /// of the matching orientation lands on exactly the one boundary that this
+    /// edge lies along — the tile's own parent for an inner edge, an ancestor
+    /// many levels up for the edge of a whole column.
+    private func boundary(of leaf: TileNode, on edge: Edge) -> TileNode? {
+        var node = leaf
+        while let parent = node.parent {
+            if parent.orientation == edge.orientation,
+               (parent.first === node) == edge.isFirstChild {
+                return parent
+            }
+            node = parent
+        }
+        return nil
+    }
+
+    /// Drag one edge of a tile by `delta` points — positive is right or down.
+    ///
+    /// This is the single primitive behind every resize: the split under that
+    /// edge moves, and every tile hanging off either side of it reflows to
+    /// match. Returns false when the edge is the screen border, which is the
+    /// signal to try the opposite edge instead.
+    @discardableResult
+    func resizeEdge(_ window: WindowRef, _ edge: Edge, by delta: CGFloat) -> Bool {
+        guard let leaf = leaf(for: window) else { return false }
         refreshRects()
 
-        // Walk up to the nearest ancestor that splits along the wanted axis,
-        // keeping `node` as that ancestor's direct child.
-        var candidate = node.parent
-        while let parent = candidate, parent.orientation != orientation {
-            node = parent
-            candidate = parent.parent
-        }
-        guard let parent = candidate else { return }
+        guard let split = boundary(of: leaf, on: edge) else { return false }
 
-        let extent = orientation == .horizontal ? parent.rect.width : parent.rect.height
-        guard extent > 0 else { return }
+        let extent = edge.orientation == .horizontal ? split.rect.width : split.rect.height
+        guard extent > 1 else { return false }
 
-        // Growing the first child means a bigger ratio; growing the second means
-        // a smaller one.
-        let isFirst = parent.first === node
-        let delta   = (step / extent) * ((isFirst == grow) ? 1 : -1)
+        split.ratio = clamp(split.ratio + delta / extent, extent: extent)
+        return true
+    }
 
-        parent.ratio = min(maxRatio, max(minRatio, parent.ratio + delta))
+    /// Whether this edge has anything behind it to give up space, i.e. whether
+    /// it is an inner boundary rather than the screen border.
+    func hasBoundary(_ window: WindowRef, on edge: Edge) -> Bool {
+        guard let leaf = leaf(for: window) else { return false }
+        return boundary(of: leaf, on: edge) != nil
+    }
+
+    /// Hyprland's `resizeactive`: grow or shrink a tile along one axis.
+    ///
+    /// The trailing edge moves by preference, so the window grows into the space
+    /// to its right or below. A tile already flush against that screen border
+    /// resizes from its other side instead, which keeps the keys doing what they
+    /// say — grow always grows — wherever the tile sits.
+    func resize(_ window: WindowRef, orientation: Orientation, grow: Bool, step: CGFloat) {
+        let trailing: Edge = orientation == .horizontal ? .right : .bottom
+        let delta = grow ? step : -step
+
+        if resizeEdge(window, trailing, by: delta) { return }
+        resizeEdge(window, trailing.opposite, by: -delta)
+    }
+
+    /// Keep both halves of a split at least `minTile` points wide, relaxing to a
+    /// bare fraction when the split itself is too small to honour that.
+    private func clamp(_ ratio: CGFloat, extent: CGFloat) -> CGFloat {
+        let floor = min(minTile / extent, 0.4)
+        return min(1 - floor, max(floor, ratio))
+    }
+
+    // MARK: - Hit Testing
+
+    /// The tile under a point given in Accessibility coordinates. Tests against
+    /// node rects rather than window frames, so a point landing in a gap still
+    /// resolves to the tile it belongs to.
+    func window(at point: CGPoint) -> WindowRef? {
+        let all = leaves()
+        if let hit = all.first(where: { $0.rect.contains(point) })?.window { return hit }
+
+        // The outer margin and the gap between displays belong to nobody, so a
+        // point that misses everything falls to the tile it sits nearest.
+        return all.min { distance(from: point, to: $0.rect) < distance(from: point, to: $1.rect) }?.window
+    }
+
+    private func distance(from point: CGPoint, to rect: CGRect) -> CGFloat {
+        let dx = max(rect.minX - point.x, 0, point.x - rect.maxX)
+        let dy = max(rect.minY - point.y, 0, point.y - rect.maxY)
+        return dx * dx + dy * dy
+    }
+
+    /// The tile rect assigned to a window by the last layout pass, gaps included.
+    func rect(of window: WindowRef) -> CGRect? {
+        leaf(for: window)?.rect
     }
 
     /// The tile nearest `window` in a direction, chosen geometrically from the

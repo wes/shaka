@@ -151,6 +151,22 @@ enum AX {
         app.activate()
     }
 
+    static func setMinimized(_ window: AXUIElement, _ minimized: Bool) {
+        AXUIElementSetAttributeValue(
+            window, kAXMinimizedAttribute as CFString,
+            minimized ? kCFBooleanTrue : kCFBooleanFalse
+        )
+    }
+
+    /// Whether the element still refers to a live window.
+    ///
+    /// Windows parked on an inactive workspace drop out of the normal window
+    /// scan, so closing one has to be detected by asking it directly rather than
+    /// by noticing its absence.
+    static func isAlive(_ window: AXUIElement) -> Bool {
+        string(window, kAXRoleAttribute as String) != nil
+    }
+
     /// The frame of a real, tileable window, or nil if Shaka should leave it
     /// alone: a standard window that is on screen, big enough to matter, and
     /// whose geometry we are allowed to change. Filters out sheets, palettes,

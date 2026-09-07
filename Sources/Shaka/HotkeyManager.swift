@@ -19,7 +19,9 @@ class HotkeyManager {
     func start() {
         guard eventTap == nil else { return }
 
-        let eventMask: CGEventMask = (1 << CGEventType.keyDown.rawValue)
+        // Mouse events come through the same tap: Reef's drag gestures have to
+        // be able to swallow them before the app underneath reacts.
+        let eventMask: CGEventMask = Self.watchedEvents.reduce(0) { $0 | (1 << $1.rawValue) }
         let selfPtr = Unmanaged.passUnretained(self).toOpaque()
 
         eventTap = CGEvent.tapCreate(
@@ -69,11 +71,38 @@ class HotkeyManager {
         }
     }
 
+    private static let watchedEvents: [CGEventType] = [
+        .keyDown,
+        .leftMouseDown, .leftMouseDragged, .leftMouseUp,
+        .rightMouseDown, .rightMouseDragged, .rightMouseUp,
+    ]
+
+    // MARK: - Mouse Handling
+
+    /// Returns true when Reef claimed the event and the app should not see it.
+    ///
+    /// Unlike key actions this runs inline rather than hopping to the next main
+    /// loop turn, because the answer decides whether the event is delivered.
+    func handleMouse(_ type: CGEventType, _ event: CGEvent) -> Bool {
+        windowManager.handleMouse(
+            type: type,
+            at: event.location,
+            flags: event.flags.intersection(modifierMask)
+        )
+    }
+
     // MARK: - Key Handling
 
     func handleKeyDown(_ event: CGEvent) -> Bool {
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         let flags = event.flags.intersection(modifierMask)
+
+        // Escape closes the cheat sheet. Only while it is up, and only when it
+        // is a bare Escape, so nothing else ever loses the key.
+        if keyCode == 53, flags.isEmpty, ShortcutOverlay.shared.isVisible {
+            DispatchQueue.main.async { ShortcutOverlay.shared.hide() }
+            return true
+        }
 
         guard let binding = bindings.first(where: {
             $0.keyCode == keyCode && $0.modifiers == flags
@@ -89,30 +118,11 @@ class HotkeyManager {
         if action.isReefOnly && wm.mode == .flow { return false }
 
         DispatchQueue.main.async {
-            switch action {
-            case .focusLeft:    wm.focusWindow(.left)
-            case .focusRight:   wm.focusWindow(.right)
-            case .focusUp:      wm.focusWindow(.up)
-            case .focusDown:    wm.focusWindow(.down)
-            case .moveLeft:     wm.move(.left)
-            case .moveRight:    wm.move(.right)
-            case .moveUp:       wm.move(.up)
-            case .moveDown:     wm.move(.down)
-            case .growWidth:    wm.resize(.right)
-            case .shrinkWidth:  wm.resize(.left)
-            case .growHeight:   wm.resize(.up)
-            case .shrinkHeight: wm.resize(.down)
-            case .snapLeft:     wm.snap(.left)
-            case .snapRight:    wm.snap(.right)
-            case .snapUp:       wm.snap(.up)
-            case .snapDown:     wm.snap(.down)
-            case .center:       wm.center()
-            case .fill:         wm.smartFill()
-            case .toggleMode:   wm.toggleMode()
-            case .toggleSplit:  wm.toggleSplit()
-            case .toggleFloat:  wm.toggleFloat()
-            case .cycleNext:    wm.cycleNext()
+            if action == .showShortcuts {
+                NotificationCenter.default.post(name: .shakaToggleShortcuts, object: nil)
+                return
             }
+            wm.perform(action)
         }
 
         return true
@@ -136,13 +146,13 @@ private func eventTapCallback(
         return Unmanaged.passUnretained(event)
     }
 
-    guard type == .keyDown else {
+    switch type {
+    case .keyDown:
+        return manager.handleKeyDown(event) ? nil : Unmanaged.passUnretained(event)
+    case .leftMouseDown, .leftMouseDragged, .leftMouseUp,
+         .rightMouseDown, .rightMouseDragged, .rightMouseUp:
+        return manager.handleMouse(type, event) ? nil : Unmanaged.passUnretained(event)
+    default:
         return Unmanaged.passUnretained(event)
     }
-
-    if manager.handleKeyDown(event) {
-        return nil
-    }
-
-    return Unmanaged.passUnretained(event)
 }

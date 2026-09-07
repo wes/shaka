@@ -103,6 +103,48 @@ class WindowManager {
         mode == .reef && reef.handlesFocusedWindow()
     }
 
+    // MARK: - Dispatch
+
+    /// Runs an action, whatever asked for it — a hotkey or a Shortcuts menu
+    /// click. `showShortcuts` is not window work, so its callers handle it.
+    func perform(_ action: Action) {
+        // Workspace actions are numbered rather than named, so they are matched
+        // by number instead of spelling out eighteen cases.
+        if let number = action.workspaceNumber      { showWorkspace(number); return }
+        if let number = action.moveToWorkspaceNumber { sendToWorkspace(number); return }
+
+        switch action {
+        case .focusLeft:    focusWindow(.left)
+        case .focusRight:   focusWindow(.right)
+        case .focusUp:      focusWindow(.up)
+        case .focusDown:    focusWindow(.down)
+        case .moveLeft:     move(.left)
+        case .moveRight:    move(.right)
+        case .moveUp:       move(.up)
+        case .moveDown:     move(.down)
+        case .growWidth:    resize(.right)
+        case .shrinkWidth:  resize(.left)
+        case .growHeight:   resize(.up)
+        case .shrinkHeight: resize(.down)
+        case .snapLeft:     snap(.left)
+        case .snapRight:    snap(.right)
+        case .snapUp:       snap(.up)
+        case .snapDown:     snap(.down)
+        case .center:       center()
+        case .fill:         smartFill()
+        case .toggleMode:   toggleMode()
+        case .toggleSplit:  toggleSplit()
+        case .toggleFloat:  toggleFloat()
+        case .cycleNext:    cycleNext()
+        case .cyclePrev:    cyclePrev()
+        case .workspaceNext:   stepWorkspace(1)
+        case .workspacePrev:   stepWorkspace(-1)
+        case .workspaceRecent: recentWorkspace()
+        case .showShortcuts:   break   // handled by the caller
+        default: break                 // workspace_N / move_to_workspace_N, above
+        }
+    }
+
     // MARK: - Actions
 
     func move(_ direction: Direction) {
@@ -150,6 +192,48 @@ class WindowManager {
     func cycleNext() {
         guard mode == .reef else { return }
         reef.cycleFocus()
+    }
+
+    func cyclePrev() {
+        guard mode == .reef else { return }
+        reef.cycleFocus(reverse: true)
+    }
+
+    // MARK: - Reef: Workspaces
+
+    func showWorkspace(_ number: Int) {
+        guard mode == .reef else { return }
+        reef.showWorkspace(number)
+    }
+
+    func sendToWorkspace(_ number: Int) {
+        guard mode == .reef else { return }
+        reef.sendFocusedToWorkspace(number)
+    }
+
+    func stepWorkspace(_ delta: Int) {
+        guard mode == .reef else { return }
+        reef.stepWorkspace(delta)
+    }
+
+    func recentWorkspace() {
+        guard mode == .reef else { return }
+        reef.showRecentWorkspace()
+    }
+
+    /// Which workspace the focused display is showing, for the menu bar.
+    var workspaceNumber: Int { mode == .reef ? reef.activeWorkspaceNumber : 0 }
+
+    func workspaceOverview() -> [WorkspaceSummary] {
+        mode == .reef ? reef.workspaceOverview() : []
+    }
+
+    // MARK: - Reef: Mouse
+
+    /// Reef's drag gestures. Flow leaves the mouse entirely alone.
+    func handleMouse(type: CGEventType, at point: CGPoint, flags: CGEventFlags) -> Bool {
+        guard mode == .reef else { return false }
+        return reef.mouse.handle(type: type, at: point, flags: flags)
     }
 
     // MARK: - Flow: Move / Resize

@@ -1,6 +1,6 @@
 import Cocoa
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var hotkeyManager: HotkeyManager?
     private var permissionTimer: Timer?
@@ -8,32 +8,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var isEnabled = true
     private var isTrusted = false
 
-    /// Actions listed in the Shortcuts menu, with what each one does per mode.
-    /// Reef reuses Flow's keys, so the same binding gets two descriptions.
-    private static let shortcutRows: [(action: String, flow: String, reef: String)] = [
-        ("focus_left",   "Focus window left",   "Focus tile left"),
-        ("focus_right",  "Focus window right",  "Focus tile right"),
-        ("focus_up",     "Focus window up",     "Focus tile up"),
-        ("focus_down",   "Focus window down",   "Focus tile down"),
-        ("move_left",    "Nudge window left",   "Swap tile left"),
-        ("move_right",   "Nudge window right",  "Swap tile right"),
-        ("move_up",      "Nudge window up",     "Swap tile up"),
-        ("move_down",    "Nudge window down",   "Swap tile down"),
-        ("grow_width",   "Grow width",          "Widen split"),
-        ("shrink_width", "Shrink width",        "Narrow split"),
-        ("grow_height",  "Grow height",         "Heighten split"),
-        ("shrink_height","Shrink height",       "Shorten split"),
-        ("snap_left",    "Snap left ½ ⅓ ⅔",     "Send to display left"),
-        ("snap_right",   "Snap right ½ ⅓ ⅔",    "Send to display right"),
-        ("snap_up",      "Snap top ½ ⅓ ⅔",      "Send to display up"),
-        ("snap_down",    "Snap bottom ½ ⅓ ⅔",   "Send to display down"),
-        ("center",       "Center window",       "Promote to master"),
-        ("fill",         "Fill screen",         "Toggle fullscreen"),
-        ("toggle_split", "—",                   "Toggle split direction"),
-        ("toggle_float", "—",                   "Toggle floating"),
-        ("cycle_next",   "—",                   "Cycle focus"),
-        ("toggle_mode",  "Switch to Reef",     "Switch to Flow"),
-    ]
+    /// The last app that was in front, Shaka aside.
+    ///
+    /// Opening the status menu can make Shaka the frontmost app, and every
+    /// window action starts from the frontmost app's focused window — so a
+    /// shortcut run from the menu has to hand focus back before it acts.
+    private var lastActiveApp: NSRunningApplication?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         config = ShakaConfig.load()
@@ -47,6 +27,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             name: .shakaModeChanged,
             object: nil
         )
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(workspaceDidChange),
+            name: .shakaWorkspaceChanged,
+            object: nil
+        )
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(toggleShortcutOverlay),
+            name: .shakaToggleShortcuts,
+            object: nil
+        )
+
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(appDidActivate(_:)),
+            name: NSWorkspace.didActivateApplicationNotification,
+            object: nil
+        )
+        lastActiveApp = NSWorkspace.shared.frontmostApplication
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -61,6 +63,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard note.object is WindowManager else { return }
         refreshStatusTitle()
         rebuildMenu()
+        // Switching modes with the cheat sheet up swaps it for the other half.
+        ShortcutOverlay.shared.refresh(config: config, mode: currentMode)
+    }
+
+    @objc private func workspaceDidChange() {
+        refreshStatusTitle()
+        rebuildMenu()
     }
 
     // MARK: - Status Bar
@@ -72,7 +81,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func refreshStatusTitle() {
-        statusItem.button?.title = isTrusted ? currentMode.symbol : "🤙⚠"
+        guard isTrusted else {
+            statusItem.button?.title = "🤙⚠"
+            return
+        }
+
+        // Reef shows which workspace is on screen — the one thing about the
+        // layout you cannot tell by looking at the windows in front of you.
+        let workspace = windowManager?.workspaceNumber ?? 0
+        statusItem.button?.title = workspace > 0
+            ? "\(currentMode.symbol) \(workspace)"
+            : currentMode.symbol
     }
 
     private func rebuildMenu() {
@@ -141,6 +160,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
+        if mode == .reef, let workspaces = windowManager?.workspaceOverview(), !workspaces.isEmpty {
+            let item = NSMenuItem(title: "Workspaces", action: nil, keyEquivalent: "")
+            item.submenu = workspacesMenu(workspaces)
+            menu.addItem(item)
+        }
+
+        let sheetItem = NSMenuItem(
+            title: "Cheat Sheet", action: #selector(toggleShortcutOverlay), keyEquivalent: ""
+        )
+        sheetItem.target = self
+        if let combo = config.bindings["show_shortcuts"],
+           let key = config.menuKey(for: combo) {
+            sheetItem.keyEquivalent = key.key
+            sheetItem.keyEquivalentModifierMask = key.modifiers
+        }
+        menu.addItem(sheetItem)
+
         let shortcutsItem = NSMenuItem(title: "Shortcuts", action: nil, keyEquivalent: "")
         shortcutsItem.submenu = shortcutsMenu(for: mode)
         menu.addItem(shortcutsItem)
@@ -166,37 +202,111 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         quitItem.target = self
         menu.addItem(quitItem)
 
+        menu.delegate = self
         statusItem.menu = menu
     }
 
-    /// Shortcut list for the active mode, built from the live bindings so a
-    /// rebound key shows up here too.
-    private func shortcutsMenu(for mode: WindowMode) -> NSMenu {
+    // MARK: - NSMenuDelegate
+
+    func menuWillOpen(_ menu: NSMenu) {
+        // Last chance to note who to hand focus back to. Opening the menu may
+        // already have made Shaka frontmost, in which case the app tracked from
+        // the activation notifications is still the right answer.
+        if let front = NSWorkspace.shared.frontmostApplication,
+           front != NSRunningApplication.current {
+            lastActiveApp = front
+        }
+    }
+
+    @objc private func appDidActivate(_ note: Notification) {
+        guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+              app != NSRunningApplication.current else { return }
+        lastActiveApp = app
+    }
+
+    /// Workspaces on the focused display, with how full each one is. Picking one
+    /// switches to it, the same as its shortcut would.
+    private func workspacesMenu(_ workspaces: [WorkspaceSummary]) -> NSMenu {
         let submenu = NSMenu()
 
-        let widest = Self.shortcutRows
-            .compactMap { config.bindings[$0.action] }
-            .map { config.displayString(for: $0).count }
-            .max() ?? 0
+        for workspace in workspaces {
+            let count = workspace.windows
+            let detail = count == 0 ? "empty" : (count == 1 ? "1 window" : "\(count) windows")
 
-        for row in Self.shortcutRows {
-            guard let combo = config.bindings[row.action] else { continue }
-            let description = (mode == .flow) ? row.flow : row.reef
-            guard description != "—" else { continue }
-
-            let key = config.displayString(for: combo)
-                .padding(toLength: widest, withPad: " ", startingAt: 0)
-
-            let item = NSMenuItem(title: "\(key)   \(description)", action: nil, keyEquivalent: "")
-            item.isEnabled = false
-            item.attributedTitle = NSAttributedString(
-                string: item.title,
-                attributes: [.font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)]
+            let item = NSMenuItem(
+                title: "\(workspace.number)   \(detail)",
+                action: #selector(selectWorkspace(_:)),
+                keyEquivalent: ""
             )
+            item.state = workspace.isActive ? .on : .off
+            item.representedObject = workspace.number
+            item.target = self
             submenu.addItem(item)
         }
 
         return submenu
+    }
+
+    /// Shortcut list for the active mode, built from the live bindings so a
+    /// rebound key shows up here too. Every row runs its action when picked —
+    /// the same one the keystroke would.
+    private func shortcutsMenu(for mode: WindowMode) -> NSMenu {
+        let submenu = NSMenu()
+        submenu.autoenablesItems = false
+
+        for (index, entry) in Shortcuts.groupedRows(mode: mode, config: config).enumerated() {
+            if index > 0 { submenu.addItem(.separator()) }
+            submenu.addItem(Self.sectionHeader(entry.group.rawValue))
+
+            for row in entry.rows {
+                // The cheat sheet has its own entry a level up.
+                guard row.action != .showShortcuts else { continue }
+                submenu.addItem(shortcutItem(row))
+            }
+        }
+
+        return submenu
+    }
+
+    /// One shortcut row. The combo becomes a real key equivalent rather than
+    /// padded text, so AppKit draws it right-aligned in the usual style — and a
+    /// numbered family (workspaces 1-9) becomes a submenu of its members.
+    private func shortcutItem(_ row: ShortcutRow) -> NSMenuItem {
+        let item = NSMenuItem(title: row.detail, action: nil, keyEquivalent: "")
+
+        guard row.members.isEmpty else {
+            let submenu = NSMenu()
+            submenu.autoenablesItems = false
+            for member in row.members { submenu.addItem(shortcutItem(member)) }
+            item.submenu = submenu
+            item.isEnabled = isEnabled
+            return item
+        }
+
+        item.action = #selector(runShortcut(_:))
+        item.target = self
+        item.representedObject = row.action?.rawValue
+        item.isEnabled = isEnabled
+
+        if let action = row.action,
+           let combo = config.bindings[action.rawValue],
+           let key = config.menuKey(for: combo) {
+            item.keyEquivalent = key.key
+            item.keyEquivalentModifierMask = key.modifiers
+        }
+
+        return item
+    }
+
+    /// A group heading inside the Shortcuts submenu.
+    private static func sectionHeader(_ text: String) -> NSMenuItem {
+        let item = NSMenuItem(title: text, action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        item.attributedTitle = NSAttributedString(string: text.uppercased(), attributes: [
+            .font: NSFont.systemFont(ofSize: 10, weight: .bold),
+            .foregroundColor: NSColor.secondaryLabelColor,
+        ])
+        return item
     }
 
     // MARK: - Accessibility
@@ -255,6 +365,35 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         windowManager?.setMode(mode)
     }
 
+    @objc private func selectWorkspace(_ sender: NSMenuItem) {
+        guard let number = sender.representedObject as? Int else { return }
+        windowManager?.showWorkspace(number)
+    }
+
+    /// Runs a shortcut picked from the menu.
+    @objc private func runShortcut(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let action = Action(rawValue: raw),
+              let wm = windowManager, isEnabled else { return }
+
+        if action == .showShortcuts { toggleShortcutOverlay(); return }
+
+        // Hand focus back first, and give the activation a moment to land —
+        // otherwise the action would look at Shaka's own (windowless) app.
+        guard let app = lastActiveApp, !app.isActive else {
+            wm.perform(action)
+            return
+        }
+
+        app.activate()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { wm.perform(action) }
+    }
+
+    @objc private func toggleShortcutOverlay() {
+        guard isTrusted else { return }
+        ShortcutOverlay.shared.toggle(config: config, mode: currentMode)
+    }
+
     @objc private func toggleEnabled(_ sender: NSMenuItem) {
         isEnabled.toggle()
 
@@ -263,6 +402,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             print("Shaka resumed")
         } else {
             // Hand tiled windows back before going quiet.
+            ShortcutOverlay.shared.hide()
             windowManager?.shutdown()
             hotkeyManager?.stop()
             print("Shaka paused")
@@ -287,6 +427,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func reloadConfig() {
         // Restore windows under the old config before swapping engines out.
+        ShortcutOverlay.shared.hide()
         windowManager?.shutdown()
         hotkeyManager?.stop()
 
@@ -301,6 +442,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func quit() {
+        ShortcutOverlay.shared.hide(animated: false)
         windowManager?.shutdown()
         hotkeyManager?.stop()
         NSApp.terminate(nil)
@@ -326,6 +468,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         \(L) + shift + s        —         toggle split direction
         \(L) + shift + f        —         toggle floating
         \(L) + opt + tab        —         cycle focus
+        \(L) + 1-9              —         show workspace
+        \(L) + shift + 1-9      —         send window to workspace
+        \(L) + cmd + drag       —         move tile (right button resizes)
+
+        \(L) + k  puts the full list for the mode you are in on screen.
 
         starting in: \(config.startMode.label)
         config: ~/.config/shaka/config.toml
